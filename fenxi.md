@@ -436,3 +436,310 @@ curl -X GET "https://nextapi.qweekle.at/api/access/logs" \
 | 1 | 是否有未公开的统计接口？ | 后端 |
 | 2 | 统计数据是否需要同步到服务器？ | 产品/后端 |
 | 3 | 统计数据的重置周期（每日/每周/手动）？ | 产品 |
+
+---
+
+## 十一、POS 终端接口
+
+### 11.1 POS 概念说明
+
+| 概念 | 说明 |
+|------|------|
+| **POS** | Point of Sale，销售点/验票终端设备 |
+| **POS Session** | POS 工作会话，代表一个班次/工作周期 |
+| **pos_id** | POS 终端的唯一标识，**验票接口必填参数** |
+
+### 11.2 获取 POS 列表
+
+| 项目 | 内容 |
+|------|------|
+| 接口 | `GET /pos` |
+| 作用 | 获取 POS 终端列表，用于 Config 页面选择 |
+| 前置条件 | 需要先选择 venture |
+| 所需权限 | `pos.show` |
+
+> ⚠️ **重要提示：权限限制**
+> 
+> **当前用户 Token 没有访问该接口的权限！**
+> 
+> 调用此接口会返回 `403 FORBIDDEN` 错误：
+> ```json
+> {
+>   "error": true,
+>   "code": "FORBIDDEN",
+>   "message": "User does not have the right permissions. Necessary permissions are pos.show"
+> }
+> ```
+> 
+> **解决方案：** 直接使用客户提供的 Pos ID，在 **「二、基础配置信息」** 中已配置：
+> - Pos ID: `92989df0-333d-11ed-ba8f-8ff40d49a83f`
+
+**请求参数：**
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `filter[venture_id]` | string | 否 | 按机构 ID 筛选 |
+| `filter[label]` | string | 否 | 按名称模糊筛选 |
+| `filter[type]` | string | 否 | 按类型筛选（如 `access_ctrl`） |
+| `include` | string | 否 | 包含子资源（如 `latestPosSession`） |
+
+**请求示例：**
+```bash
+curl -X GET "https://nextapi.qweekle.at/api/pos?filter[venture_id]=<venture_id>" \
+  -H "Authorization: Bearer 888|aCs8qcl1fhyToJsBdsNwtcgeKwYi0Qc4FIhJnHLUf649579e" \
+  -H "tenant: 019a248b-66e1-7214-875d-41e05984a099" \
+  -H "venture: <venture_id>" \
+  -H "Content-Type: application/json"
+```
+
+**响应格式：**
+```json
+{
+  "data": [
+    {
+      "id": "92989df0-333d-11ed-ba8f-8ff40d49a83f",
+      "venture_id": "VXXX9ebc3ccae0234d01b1130cf58bea39dd",
+      "label": "CTRL ERIC",
+      "type": "access_ctrl",
+      "hardware_id": null
+    }
+  ]
+}
+```
+
+---
+
+### 11.3 获取单个 POS 详情
+
+| 项目 | 内容 |
+|------|------|
+| 接口 | `GET /pos/{pos_id}` |
+| 作用 | 获取指定 POS 的详细信息 |
+
+**请求参数：**
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `pos_id` | string | ✅ 是 | POS ID（路径参数） |
+| `withCurrentSession` | boolean | 否 | 是否包含当前会话 |
+| `withAttributes` | boolean | 否 | 是否包含属性 |
+
+**请求示例：**
+```bash
+curl -X GET "https://nextapi.qweekle.at/api/pos/92989df0-333d-11ed-ba8f-8ff40d49a83f?withCurrentSession=true" \
+  -H "Authorization: Bearer 888|aCs8qcl1fhyToJsBdsNwtcgeKwYi0Qc4FIhJnHLUf649579e" \
+  -H "tenant: 019a248b-66e1-7214-875d-41e05984a099" \
+  -H "venture: <venture_id>" \
+  -H "Content-Type: application/json"
+```
+
+---
+
+### 11.4 获取 POS 当前活跃会话
+
+| 项目 | 内容 |
+|------|------|
+| 接口 | `GET /pos/{pos_id}/current-pos-session` |
+| 作用 | 检查 POS 是否有活跃的工作会话 |
+
+**请求示例：**
+```bash
+curl -X GET "https://nextapi.qweekle.at/api/pos/92989df0-333d-11ed-ba8f-8ff40d49a83f/current-pos-session" \
+  -H "Authorization: Bearer 888|aCs8qcl1fhyToJsBdsNwtcgeKwYi0Qc4FIhJnHLUf649579e" \
+  -H "tenant: 019a248b-66e1-7214-875d-41e05984a099" \
+  -H "venture: <venture_id>" \
+  -H "Content-Type: application/json"
+```
+
+**响应格式：**
+```json
+{
+  "data": {
+    "id": "PSXXa0a893f18a86483e834395b6bc470977",
+    "pos_id": "92989df0-333d-11ed-ba8f-8ff40d49a83f",
+    "opened_at": "2025-12-23T03:02:50.000000Z",
+    "closed_at": null
+  }
+}
+```
+
+**判断逻辑：**
+- `closed_at == null` → 会话活跃，可以验票
+- `closed_at != null` → 会话已关闭，需要重新开班
+- 返回 `204` 或 `404` → 无活跃会话，需要创建
+
+---
+
+### 11.5 创建 POS Session（开班）
+
+| 项目 | 内容 |
+|------|------|
+| 接口 | `POST /pos/{pos_id}/pos-sessions` |
+| 作用 | 为指定 POS 创建新的工作会话（开班） |
+| ⚠️ 注意 | 一个 POS 同时只能有一个活跃会话 |
+
+**请求参数（Body）：**
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `pos_id` | string | ✅ 是 | POS ID（需要在 body 中再传一次） |
+| `total` | integer | ✅ 是 | 初始金额（验票 App 设为 `0`） |
+| `cash` | array | ✅ 是 | 现金明细（验票 App 传 `[]`） |
+| `open_comment` | string | ✅ 是 | 开班备注（可传空字符串 `""`） |
+
+**请求示例：**
+```bash
+curl -X POST "https://nextapi.qweekle.at/api/pos/92989df0-333d-11ed-ba8f-8ff40d49a83f/pos-sessions" \
+  -H "Authorization: Bearer 888|aCs8qcl1fhyToJsBdsNwtcgeKwYi0Qc4FIhJnHLUf649579e" \
+  -H "tenant: 019a248b-66e1-7214-875d-41e05984a099" \
+  -H "venture: VXXX9ebc3ccae0234d01b1130cf58bea39dd" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "pos_id": "92989df0-333d-11ed-ba8f-8ff40d49a83f",
+    "total": 0,
+    "cash": [],
+    "open_comment": ""
+  }'
+```
+
+**响应格式：**
+```json
+{
+  "data": {
+    "id": "PSXXa0a893f18a86483e834395b6bc470977",
+    "venture_id": "VXXX9ebc3ccae0234d01b1130cf58bea39dd",
+    "pos_id": "92989df0-333d-11ed-ba8f-8ff40d49a83f",
+    "opened_at": "2025-12-23T03:02:50.000000Z",
+    "closed_at": null
+  }
+}
+```
+
+**常见错误：**
+
+| 错误信息 | 原因 | 解决方案 |
+|----------|------|----------|
+| `Pos already have opened session` | POS 已有活跃会话 | 无需再创建，直接验票 |
+| `The pos id field is required` | 缺少 pos_id 参数 | 在 body 中添加 pos_id |
+| `The total field is required` | 缺少 total 参数 | 在 body 中添加 total |
+
+---
+
+### 11.6 关闭 POS Session（结班）
+
+| 项目 | 内容 |
+|------|------|
+| 接口 | `POST /pos-sessions/{pos_session_id}/close` |
+| 作用 | 关闭指定的工作会话（结班） |
+| ⚠️ 注意 | 必须使用 Session ID，不能用 POS ID |
+
+**请求参数：**
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `pos_session_id` | string | ✅ 是 | POS Session ID（路径参数） |
+
+**请求示例：**
+```bash
+curl -X POST "https://nextapi.qweekle.at/api/pos-sessions/PSXXa0a893f18a86483e834395b6bc470977/close" \
+  -H "Authorization: Bearer 888|aCs8qcl1fhyToJsBdsNwtcgeKwYi0Qc4FIhJnHLUf649579e" \
+  -H "tenant: 019a248b-66e1-7214-875d-41e05984a099" \
+  -H "venture: VXXX9ebc3ccae0234d01b1130cf58bea39dd" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+**响应格式：**
+```json
+{
+  "data": {
+    "id": "PSXXa0a893f18a86483e834395b6bc470977",
+    "closed_at": "2025-12-23T03:12:10.000000Z",
+    "closed_by": "UXXXa091743962d24f989ba274069619d500"
+  }
+}
+```
+
+---
+
+### 11.7 POS 接口汇总
+
+| 接口 | 方法 | 作用 | 验票 App 必需 |
+|------|------|------|---------------|
+| `/pos` | GET | 获取 POS 列表 | ✅ Config 页面选择 |
+| `/pos/{pos_id}` | GET | 获取 POS 详情 | ⚠️ 可选 |
+| `/pos/{pos_id}/current-pos-session` | GET | 检查活跃会话 | ✅ 验票前检查 |
+| `/pos/{pos_id}/pos-sessions` | POST | 创建会话（开班） | ✅ 无会话时创建 |
+| `/pos-sessions/{session_id}/close` | POST | 关闭会话（结班） | ✅ 结束验票时 |
+
+---
+
+## 十二、完整验票流程图
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  1. Config 配置完成                                          │
+│     - 选择 venture（机构）                                    │
+│     - 选择 access_point（控制点）                             │
+│     - 选择 pos（验票终端）                                    │
+│     - 保存配置到本地                                          │
+└─────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────┐
+│  2. 检查 POS 是否有活跃会话                                   │
+│     接口: GET /pos/{pos_id}/current-pos-session              │
+└─────────────────────────────────────────────────────────────┘
+                              ↓
+                    ┌─────────┴─────────┐
+                    ↓                   ↓
+          有活跃会话 (200)        无活跃会话 (204/404)
+          closed_at == null              ↓
+                    ↓           ┌───────────────────────────┐
+                    │           │  3. 创建新会话（开班）      │
+                    │           │  接口: POST /pos/{pos_id}/ │
+                    │           │        pos-sessions        │
+                    │           │  Body: {                   │
+                    │           │    "pos_id": "<pos_id>",   │
+                    │           │    "total": 0,             │
+                    │           │    "cash": [],             │
+                    │           │    "open_comment": ""      │
+                    │           │  }                         │
+                    │           └───────────────────────────┘
+                    │                       ↓
+                    │              保存返回的 session_id
+                    │                       ↓
+                    └───────────┬───────────┘
+                                ↓
+┌─────────────────────────────────────────────────────────────┐
+│  4. 开始验票                                                  │
+│     接口: POST /access/check-code                            │
+│     Body: {                                                  │
+│       "code": "<扫描到的票据码>",                              │
+│       "pos_id": "<pos_id>"                                   │
+│     }                                                        │
+└─────────────────────────────────────────────────────────────┘
+                              ↓
+                    ┌─────────┴─────────┐
+                    ↓                   ↓
+               成功 (200)           失败
+                    ↓                   ↓
+               显示通过            判断错误码
+               更新统计                 ↓
+                    │     ┌─────────────┼─────────────┐
+                    │     ↓             ↓             ↓
+                    │   403           401          其他
+                    │  票据无效    Token 失效     网络问题
+                    │     ↓             ↓             ↓
+                    │  显示拒绝    提示重新配置   切换离线模式
+                    │  更新统计                   更新统计
+                    │     │             │             │
+                    └─────┴─────────────┴─────────────┘
+                                ↓
+                         继续扫码验票
+                                ↓
+┌─────────────────────────────────────────────────────────────┐
+│  5. 结束验票（结班）                                          │
+│     接口: POST /pos-sessions/{session_id}/close             │
+│     Body: {}                                                │
+└─────────────────────────────────────────────────────────────┘
+```
