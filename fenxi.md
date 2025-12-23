@@ -12,7 +12,10 @@
 |------|------|
 | 1 | API 文档中**没有**心跳检测接口，需要与后端确认或使用业务接口替代 |
 | 2 | API 文档中**没有**二维码识别接口，需要前端自行实现扫码解析功能 |
-| 3 | API 文档中**没有**配置提交接口，配置数据需存储在本地 |
+| 3 | API 文档中**没有**配置提交接口，配置数据可能需要需存储在本地 |
+| 4 | 验票列表页 对于每个验票记录**没有**验证状态 |
+| 5 | API 文档中**没有**验票统计数据接口（如：通过数、拒绝数、降级模式拒绝数） |
+| 6 | API 文档中**没有**按时间范围查询验票统计的接口 |
 
 ---
 
@@ -23,6 +26,7 @@
 | Base URL | `https://nextapi.qweekle.at/api` |
 | API Key | `888\|aCs8qcl1fhyToJsBdsNwtcgeKwYi0Qc4FIhJnHLUf649579e` |
 | Tenant ID | `019a248b-66e1-7214-875d-41e05984a099` |
+| Pos ID | `92989df0-333d-11ed-ba8f-8ff40d49a83f` |
 
 ---
 
@@ -132,7 +136,7 @@ curl -X GET "https://nextapi.qweekle.at/api/access/points" \
 
 ### 5.1 结论
 
-**API 文档中没有专门的"配置提交"接口，点击 Confirmer 后数据需存储在本地。**
+**API 文档中没有专门的"配置提交"接口，点击 Confirmer 后数据可能是存储在本地。这边需要和Cue确认**
 
 ### 5.2 可选的校验请求
 
@@ -146,7 +150,7 @@ GET /ventures/{venture_id}
 GET /access/points/{access_point_id}
 ```
 
-### 5.3 本地存储字段
+### 5.3 如果需要本地存储 可能需要的字段
 
 | 字段 | 说明 | 来源 | 是否必填 |
 |------|------|------|----------|
@@ -223,27 +227,13 @@ curl -X GET "https://nextapi.qweekle.at/api/ventures" \
 | `500/502/503` | ✅ 正常 | ❌ 服务异常 | 切换离线模式 |
 | `超时/无响应` | ❌ 断网 | ❓ 未知 | 切换离线模式 |
 
-### 7.3 心跳检测伪代码
+### 7.3 下次启动检查逻辑（配置config后）
 
-```
-心跳检测() {
-    try {
-        response = GET /ventures (超时: 5秒)
-        
-        if (response.status == 200) {
-            return { network: true, api: true }
-        } 
-        else if (response.status == 401 || 403) {
-            return { network: true, api: false, reason: "认证失败" }
-        }
-        else if (response.status >= 500) {
-            return { network: true, api: false, reason: "服务异常" }
-        }
-    } catch (超时/网络错误) {
-        return { network: false, api: false }
-    }
-}
-```
+| 场景 | 处理方式 |
+|------|----------|
+| 本地配置完整 + 网络正常 | 调用 `GET /ventures/{venture_id}` 验证，成功则进入主页 |
+| 本地配置完整 + 网络异常 | 进入离线模式，允许使用本地缓存数据 |
+| 本地配置不完整 | 停留在 Config 页面，要求用户完成配置 |
 
 ---
 
@@ -304,7 +294,7 @@ curl -X POST "https://nextapi.qweekle.at/api/access/check-code" \
   -H "Content-Type: application/json" \
   -d '{
     "code": "<扫描到的票据码>",
-    "pos_id": "<pos_id>"
+    "pos_id": "<pos_id>必传 但是目前没有获取的途径"
   }'
 ```
 
@@ -322,23 +312,14 @@ curl -X POST "https://nextapi.qweekle.at/api/access/check-code" \
   "message": "Access denied"
 }
 ```
+### 8.5 重要说明
+**API 文档中没有批量验票接口**，`POST /access/check-code` 只支持单个票据码验证。
 
 ---
 
-## 九、下次启动检查逻辑
+## 九、验票记录列表页
 
-| 场景 | 处理方式 |
-|------|----------|
-| 本地配置完整 + 网络正常 | 调用 `GET /ventures/{venture_id}` 验证，成功则进入主页 |
-| 本地配置完整 + 网络异常 | 进入离线模式，允许使用本地缓存数据 |
-| 本地配置不完整 | 停留在 Config 页面，要求用户完成配置 |
-
-
----
-
-## 十、验票记录列表页
-
-### 10.1 接口信息
+### 9.1 接口信息
 
 | 项目 | 内容 |
 |------|------|
@@ -346,7 +327,7 @@ curl -X POST "https://nextapi.qweekle.at/api/access/check-code" \
 | 作用 | 获取验票记录列表 |
 | 可选筛选 | `filter[code]`、`filter[credential_id]`、`filter[access_point_id]`、`filter[rule_id]` |
 
-### 10.2 请求示例
+### 9.2 请求示例
 
 ```bash
 curl -X GET "https://nextapi.qweekle.at/api/access/logs" \
@@ -356,7 +337,7 @@ curl -X GET "https://nextapi.qweekle.at/api/access/logs" \
   -H "Content-Type: application/json"
 ```
 
-### 10.3 响应格式
+### 9.3 响应格式
 
 ```json
 {
@@ -380,7 +361,7 @@ curl -X GET "https://nextapi.qweekle.at/api/access/logs" \
 }
 ```
 
-### 10.4 响应字段说明
+### 9.4 响应字段说明
 
 | 字段 | 类型 | 说明 | UI 对应 |
 |------|------|------|---------|
@@ -395,118 +376,63 @@ curl -X GET "https://nextapi.qweekle.at/api/access/logs" \
 | `is_forced` | boolean | 是否强制通过 | - |
 | `created_at` | datetime | 验票时间 | 21/09/2025 12:00 |
 
-### 10.5 ⚠️ 重要说明：成功/失败状态
+### 9.5 ⚠️ 重要说明：成功/失败状态
 
 **API 返回的 AccessLog 中没有成功/失败状态字段！**
 
 `GET /access/logs` 只记录**成功通过**的验票记录，失败的验票不会出现在这个列表中。
 
-### 10.6 列表页数据来源方案
+### 9.6 列表页数据来源方案
 
 由于 API 限制，列表页需要**前端自己维护验票状态**：
 
-```javascript
-// 验票时保存结果到本地
-async function checkAndSave(code) {
-    try {
-        const response = await fetch('/access/check-code', {
-            method: 'POST',
-            body: JSON.stringify({ code: code })
-        })
-        
-        const result = await response.json()
-        
-        // 保存到本地列表
-        const record = {
-            code: code,
-            success: result.success,
-            message: result.message,
-            status: result.success ? 'approved' : 'refused',
-            checked_at: new Date().toISOString()
-        }
-        
-        saveToLocalList(record)
-        return record
-        
-    } catch (error) {
-        // 网络错误，进入离线模式
-        const record = {
-            code: code,
-            status: 'pending',
-            checked_at: new Date().toISOString()
-        }
-        saveToOfflineQueue(record)
-        return record
-    }
-}
-```
-
-### 10.7 列表页状态对应
-
-| 状态 | HTTP 状态码 | success | UI 显示 | 颜色 |
-|------|-------------|---------|---------|------|
-| 处理中 | - | - | En cours de traitement | 灰色 |
-| 通过 | 200 | true | Approuvé | 绿色 |
-| 拒绝 | 403 | false | Accès refusé | 红色 |
-| 待同步 | - | - | En attente | 蓝色 |
-
 ---
 
-## 十一、离线模式与批量同步
+## 十、验票记录统计
 
-### 11.1 重要说明
+### 10.1 统计页面数据需求
 
-**API 文档中没有批量验票接口**，`POST /access/check-code` 只支持单个票据码验证。
+| 统计项 | 法语名称 | 说明 |
+|--------|----------|------|
+| 在线通过数 | Approuvé en ligne | 在线模式下验票通过的次数 |
+| 在线拒绝数 | Refus en ligne | 在线模式下验票被拒绝的次数 |
+| 降级模式拒绝数 | Refus en dégradé | 降级/离线模式下验票被拒绝的次数 |
 
-### 11.2 离线同步方案
+### 10.2 ⚠️ API 现状
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  离线模式：扫码 → 本地缓存（队列）                           │
-│  状态标记为 "pending"                                        │
-└─────────────────────────────────────────────────────────────┘
-                              ↓
-┌─────────────────────────────────────────────────────────────┐
-│  网络恢复：逐个调用 POST /access/check-code                  │
-│  （循环处理队列中的每个票据码）                              │
-└─────────────────────────────────────────────────────────────┘
-                              ↓
-┌─────────────────────────────────────────────────────────────┐
-│  更新本地记录状态为 "approved" 或 "refused"                  │
-└─────────────────────────────────────────────────────────────┘
-```
+**在当前 OpenAPI 规范中，没有找到对应的统计接口。**
 
-### 11.3 离线同步伪代码
+已排查的相关接口：
+- `GET /agendas/daily-stats/{year}` - 日程/预约统计，非验票统计
+- `GET /sales/metrics` - 销售指标，非验票统计
 
-```javascript
-// 离线队列
-let offlineQueue = []
+### 10.3 可能的数据来源
 
-// 离线时：加入队列
-function offlineScan(code) {
-    offlineQueue.push({
-        code: code,
-        scanned_at: new Date().toISOString(),
-        status: 'pending'
-    })
-    saveToLocalStorage(offlineQueue)
-}
+| 方案 | 说明 | 可行性 |
+|------|------|--------|
+| **前端本地统计** | App 在本地存储每次验票结果，自行计算统计数据 | ✅ 推荐 |
+| 未公开的内部接口 | 可能存在未在 OpenAPI 文档中公开的统计接口 | ⚠️ 需确认 |
+| 后端聚合查询 | 通过 GraphQL 或其他内部 API 获取 | ⚠️ 需确认 |
 
-// 网络恢复时：批量同步
-async function syncOfflineQueue() {
-    for (let item of offlineQueue) {
-        if (item.status === 'pending') {
-            try {
-                const result = await checkCode(item.code)
-                item.status = result.success ? 'approved' : 'refused'
-                item.message = result.message
-                item.synced_at = new Date().toISOString()
-            } catch (error) {
-                // 网络又断了，停止同步
-                break
-            }
-        }
-    }
-    saveToLocalStorage(offlineQueue)
-}
-```
+### 10.4 前端本地统计方案（推荐）
+
+如果采用前端本地统计，需要存储以下数据：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `approved_online` | integer | 在线模式通过次数 |
+| `rejected_online` | integer | 在线模式拒绝次数 |
+| `rejected_degraded` | integer | 降级模式拒绝次数 |
+| `last_reset_at` | datetime | 上次重置时间 |
+
+**统计更新时机：**
+- 每次调用 `POST /access/check-code` 后，根据响应结果更新对应计数
+- 降级模式下的验票结果单独统计
+
+### 10.5 待确认事项
+
+| 序号 | 问题 | 负责人 |
+|------|------|--------|
+| 1 | 是否有未公开的统计接口？ | 后端 |
+| 2 | 统计数据是否需要同步到服务器？ | 产品/后端 |
+| 3 | 统计数据的重置周期（每日/每周/手动）？ | 产品 |
