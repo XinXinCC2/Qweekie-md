@@ -1189,7 +1189,7 @@ UI 显示：红色卡片
 #### 场景 3：票据过期 - 有客户信息
 
 ```
-UI 显示：橙色卡片
+UI 显示：红色卡片
 ├── 票种名称: "Billet non daté valable 1 jour" → GET /tickets → product_label
 ├── 票据码: "TX09180DF5C-1" → POST /access/check-code → scanned_resource.number
 ├── 剩余次数: "0/1" → POST /access/check-code → qty_left/qty_total
