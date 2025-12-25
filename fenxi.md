@@ -1096,3 +1096,116 @@ curl -X GET "https://nextapi.qweekle.at/api/clients/045b1830-9936-11ee-8c4f-1d17
 │     Body: {}                                                │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+
+---
+
+## 十四、验票结果 UI 字段来源分析
+
+### 14.1 字段与接口映射表
+
+| UI 显示字段 | 示例值 | 接口来源 | 字段路径 |
+|------------|--------|----------|----------|
+| 票种名称 | Entrée 0-3 ans / Entrée adulte / Billet non daté / Carte annuelle | `GET /tickets/{id}` | `data.product_label` |
+| 票据码 | 700925488B0-1 / TX09180DF5C-1 / 68C927BF20849 | `POST /access/check-code` | `metadata.scanned_resource.number` |
+| 验票状态 | Accès refusé / Activité acceptée | `POST /access/check-code` | `data.access_granted` (true/false) |
+| 使用次数 | Utilisations : 0 / 1 usage(s) | `POST /access/check-code` | `metadata.scanned_resource.qty_used` |
+| 剩余次数 | 0/1 | `POST /access/check-code` | `metadata.scanned_resource.qty_left` |
+| 上次通过时间 | Dernier passage : 25/09/2025 11:07 | `GET /tickets/{id}` | `data.last_used_at` |
+| 过期时间 | Expire le 18/09/2025 / 13/02/2026 | `POST /access/check-code` | `metadata.scanned_resource.expired_at` |
+| 控制点名称 | Tout le Parc | 本地配置 | Config 中保存的 `access_point_label` |
+| 预约时间 | 21/09/2025 12:00 | ⚠️ **需确认** | 可能需要额外的预约接口 |
+| 客户姓名 | Rivron Pierre / BAYYYY JULIEEEN_ERIC | `GET /clients/{id}` | `data.firstname` + `data.lastname` |
+| 客户头像 | 照片 | `GET /clients/{id}` | `data.profile_picture` |
+| 拒绝原因 | Credential has expired | `POST /access/check-code` | `data.message` |
+
+---
+
+### 14.2 完整数据获取流程
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  1. POST /access/check-code                                  │
+│     获取：                                                    │
+│     ├── access_granted (验票状态)                            │
+│     ├── message (拒绝原因：如 "Credential has expired")       │
+│     └── scanned_resource                                     │
+│         ├── id (用于获取详情)                                 │
+│         ├── number (票据码)                                   │
+│         ├── qty_used (已使用次数)                             │
+│         ├── qty_left (剩余次数)                               │
+│         └── expired_at (过期时间)                             │
+└─────────────────────────────────────────────────────────────┘
+                              ↓
+                    scanned_resource 不为 null？
+                              ↓
+┌─────────────────────────────────────────────────────────────┐
+│  2. GET /tickets/{scanned_resource.id}                       │
+│     获取：                                                    │
+│     ├── product_label (票种名称)                             │
+│     ├── last_used_at (上次通过时间)                          │
+│     ├── is_subscription (是否年卡)                           │
+│     └── client (客户对象，可能为 null)                        │
+│         └── id (客户ID)                                      │
+└─────────────────────────────────────────────────────────────┘
+                              ↓
+                       client 不为 null？
+                              ↓
+┌─────────────────────────────────────────────────────────────┐
+│  3. GET /clients/{client_id}                                 │
+│     获取：                                                    │
+│     ├── firstname + lastname (客户姓名)                      │
+│     └── profile_picture (头像URL)                            │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### 14.3 不同验票场景的数据来源
+
+#### 场景 1：验票通过 - 无客户信息
+
+```
+UI 显示：绿色卡片
+├── 票种名称: "Entrée adulte (OBLIGATOI..." → GET /tickets → product_label
+├── 票据码: "700925DAC32-1" → POST /access/check-code → scanned_resource.number
+├── 控制点: "Tout le Parc" → 本地配置
+├── 预约时间: "21/09/2025 12:00" → ⚠️ 需确认接口
+└── 客户信息: 不显示（client 为 null）
+```
+
+#### 场景 2：验票拒绝 - 有客户信息和头像
+
+```
+UI 显示：红色卡片
+├── 票种名称: "Entrée 0-3 ans" → GET /tickets → product_label
+├── 票据码: "700925DF438-1" → POST /access/check-code → scanned_resource.number
+├── 状态: "Accès refusé" → POST /access/check-code → access_granted = false
+├── 使用次数: "Utilisations : 0" → POST /access/check-code → scanned_resource.qty_used
+├── 客户姓名: "Rivron Pierre" → GET /clients → firstname + lastname
+└── 客户头像: 照片 → GET /clients → profile_picture
+```
+
+#### 场景 3：票据过期 - 有客户信息
+
+```
+UI 显示：橙色卡片
+├── 票种名称: "Billet non daté valable 1 jour" → GET /tickets → product_label
+├── 票据码: "TX09180DF5C-1" → POST /access/check-code → scanned_resource.number
+├── 剩余次数: "0/1" → POST /access/check-code → qty_left/qty_total
+├── 拒绝原因: "Credential has expired" → POST /access/check-code → message
+├── 过期时间: "Expire le 18/09/2025" → POST /access/check-code → expired_at
+└── 客户姓名: "Carton-Heurtebize Agnes" → GET /clients → firstname + lastname
+```
+
+#### 场景 4：年卡/订阅票 - 通过
+
+```
+UI 显示：绿色卡片
+├── 票种名称: "Carte annuelle 5 mois" → GET /tickets → product_label
+├── 票据码: "68C927BF20849" → POST /access/check-code → scanned_resource.number
+├── 使用次数: "1 usage(s)" → POST /access/check-code → scanned_resource.qty_used
+├── 过期时间: "Expire le 13/02/2026" → POST /access/check-code → expired_at
+├── 是否年卡: true → GET /tickets → is_subscription
+└── 客户姓名: "BAYYYY JULIEEEN_ERIC" → GET /clients → firstname + lastname
+```
