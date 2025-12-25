@@ -16,6 +16,7 @@
 | 4 | 验票列表页 对于每个验票记录**没有**验证状态 |
 | 5 | API 文档中**没有**验票统计数据接口（如：通过数、拒绝数、降级模式拒绝数） |
 | 6 | API 文档中**没有**按时间范围查询验票统计的接口 |
+| 7 | API 文档中**没有**降级模式补验接口，离线暂存的票据需要恢复网络后逐条调用 `POST /access/check-code` 补验 |
 
 ---
 
@@ -112,7 +113,7 @@ curl -X GET "https://nextapi.qweekle.at/api/access/point-groups" \
 
 ---
 
-### 4.3 获取访问控制点列表（备选接口）
+### 4.3 获取访问控制点列表
 
 | 项目 | 内容 |
 |------|------|
@@ -128,6 +129,123 @@ curl -X GET "https://nextapi.qweekle.at/api/access/points" \
   -H "tenant: 019a248b-66e1-7214-875d-41e05984a099" \
   -H "venture: <选择的venture_id>" \
   -H "Content-Type: application/json"
+```
+
+**响应格式：**
+```json
+{
+  "data": [
+    {
+      "id": 12,
+      "venture_id": "VXXX9ebc3ccae0234d01b1130cf58bea39dd",
+      "location_id": "1b3ad620-e4f3-11e8-9207-9fd38968283e",
+      "label": "Accès Trampo + Kidsparc",
+      "direction": null,
+      "access_point_group_id": 2
+    }
+  ],
+  "metadata": {}
+}
+```
+
+---
+
+### 4.4 获取单个访问控制点详情
+
+| 项目 | 内容 |
+|------|------|
+| 接口 | `GET /access/points/{access_point_id}` |
+| 作用 | 获取单个访问控制点的详细信息，用于验证 ID 是否有效 |
+
+**请求参数：**
+
+| 参数 | 类型 | 位置 | 必填 | 说明 |
+|------|------|------|------|------|
+| `access_point_id` | integer | 路径 | ✅ 是 | 访问控制点 ID |
+
+**请求示例：**
+```bash
+curl -X GET "https://nextapi.qweekle.at/api/access/points/12" \
+  -H "Authorization: Bearer 888|aCs8qcl1fhyToJsBdsNwtcgeKwYi0Qc4FIhJnHLUf649579e" \
+  -H "tenant: 019a248b-66e1-7214-875d-41e05984a099" \
+  -H "venture: VXXX9ebc3ccae0234d01b1130cf58bea39dd" \
+  -H "Content-Type: application/json"
+```
+
+**响应格式（成功）：**
+```json
+{
+  "data": {
+    "id": 12,
+    "venture_id": "VXXX9ebc3ccae0234d01b1130cf58bea39dd",
+    "location_id": "1b3ad620-e4f3-11e8-9207-9fd38968283e",
+    "label": "Accès Trampo + Kidsparc",
+    "direction": null,
+    "access_point_group_id": 2
+  }
+}
+```
+
+**响应格式（失败 - ID 不存在）：**
+```json
+{
+  "error": true,
+  "code": "RESOURCE_NOT_FOUND",
+  "message": "AccessPoint not found"
+}
+```
+
+---
+
+### 4.5 ⚠️ Point Groups 与 Points 的区别
+
+> **重要：这是「组」和「成员」的关系，验票时必须使用 Points 的 ID！**
+
+| 接口 | 概念 | 说明 | 验票时使用 |
+|------|------|------|------------|
+| `/access/point-groups` | **控制点组**（Group） | 多个控制点的分组/集合 | ❌ 不能直接用 |
+| `/access/points` | **控制点**（Point） | 具体的验票入口/设备 | ✅ 必须使用 |
+
+**关系图：**
+
+```
+Point Group (组)                    Access Points (具体控制点)
+┌─────────────────┐                ┌─────────────────────────┐
+│  ID: 1          │ ◄──────────────│  ID: 13 - Outdoor       │
+│  NEWGROUP       │                │  access_point_group_id: 1│
+└─────────────────┘                ├─────────────────────────┤
+                                   │  ID: 15 - testrole      │
+                                   │  access_point_group_id: 1│
+                                   ├─────────────────────────┤
+                                   │  ID: 16 - Point Ariane  │
+                                   │  access_point_group_id: 1│
+                                   └─────────────────────────┘
+```
+
+**当前可用的 Access Point 列表：**
+
+| ID | 名称 | 所属组 ID |
+|----|------|-----------|
+| 12 | Accès Trampo + Kidsparc | 2 |
+| 13 | Outdoor | 1 |
+| 14 | test controle eric | - |
+| 15 | testrole | 1 |
+| 16 | Point controle Ariane | 1 |
+| 17 | Portable Ariane | - |
+
+**Config 页面正确的选择流程：**
+
+```
+1. 选择 Point Group（组）- 可选
+   └── 获取 group_id = 1
+
+2. 根据 group_id 筛选 Points
+   └── GET /access/points?filter[access_point_group_id]=1
+
+3. 选择具体的 Point
+   └── 获取 access_point_id = 13 或 15 或 16
+
+4. 验票时使用 access_point_id（不是 group_id！）
 ```
 
 ---
@@ -285,34 +403,82 @@ curl -X GET "https://nextapi.qweekle.at/api/ventures" \
 | 接口 | `POST /access/check-code` |
 | 作用 | 核心验票接口，校验票据码是否有效 |
 
+**请求参数（Body）：**
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `code` | string | ✅ 是 | 扫描到的票据码 |
+| `pos_id` | string | ✅ 是 | POS 终端 ID（从 Config 配置获取） |
+
 **请求示例：**
 ```bash
 curl -X POST "https://nextapi.qweekle.at/api/access/check-code" \
   -H "Authorization: Bearer 888|aCs8qcl1fhyToJsBdsNwtcgeKwYi0Qc4FIhJnHLUf649579e" \
   -H "tenant: 019a248b-66e1-7214-875d-41e05984a099" \
-  -H "venture: <venture_id>" \
+  -H "venture: VXXX9ebc3ccae0234d01b1130cf58bea39dd" \
   -H "Content-Type: application/json" \
   -d '{
-    "code": "<扫描到的票据码>",
-    "pos_id": "<pos_id>必传 但是目前没有获取的途径"
+    "code": "ADEE578B3F1C8",
+    "pos_id": "92989df0-333d-11ed-ba8f-8ff40d49a83f"
   }'
 ```
 
-**响应格式：**
+**响应格式（成功）：**
 ```json
-// 成功
 {
-  "success": true,
-  "message": "Access granted"
-}
-
-// 失败
-{
-  "success": false,
-  "message": "Access denied"
+  "data": {
+    "access_granted": true
+  },
+  "metadata": {
+    "scanned_resource": {
+      "id": "a0a906e0e1a64a84b9ab2a7460ff0a28",
+      "integer_id": 699,
+      "venture_id": "VXXX9ebc3ccae0234d01b1130cf58bea39dd",
+      "ticket_batch_id": "TBXXa0a906e0dffa454d9e9994854871b1ba",
+      "product_id": "PXXXa0a90560bf0c4c4d95b01dae8487d186",
+      "number": "ADEE578B3F1C8",
+      "used_at": "2025-12-25T02:28:27.000000Z",
+      "expired_at": "2026-12-23T22:59:59.000000Z",
+      "qty_total": 1000,
+      "qty_used": 24,
+      "qty_left": 976,
+      "sale_id": 2071,
+      "sale_item_id": 5233
+    },
+    "created_order": null
+  }
 }
 ```
-### 8.5 重要说明
+
+**响应格式（失败 - 票据无效）：**
+```json
+{
+  "data": {
+    "access_granted": false,
+    "message": "Unidentified scanned resource"
+  },
+  "metadata": {
+    "scanned_resource": null,
+    "created_order": null
+  }
+}
+```
+
+### 8.5 验票响应字段说明
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `access_granted` | boolean | ✅ true = 通过，❌ false = 拒绝 |
+| `message` | string | 拒绝原因（仅失败时返回） |
+| `scanned_resource.id` | string | 票据 UUID（用于查询详情） |
+| `scanned_resource.number` | string | 票据码 |
+| `scanned_resource.qty_total` | integer | 总可用次数 |
+| `scanned_resource.qty_used` | integer | 已使用次数 |
+| `scanned_resource.qty_left` | integer | 剩余次数 |
+| `scanned_resource.expired_at` | datetime | 过期时间 |
+| `scanned_resource.ticket_batch_id` | string | 票据批次 ID（有值表示是 Ticket 类型） |
+
+### 8.6 重要说明
 **API 文档中没有批量验票接口**，`POST /access/check-code` 只支持单个票据码验证。
 
 ---
@@ -456,23 +622,6 @@ curl -X GET "https://nextapi.qweekle.at/api/access/logs" \
 | 接口 | `GET /pos` |
 | 作用 | 获取 POS 终端列表，用于 Config 页面选择 |
 | 前置条件 | 需要先选择 venture |
-| 所需权限 | `pos.show` |
-
-> ⚠️ **重要提示：权限限制**
-> 
-> **当前用户 Token 没有访问该接口的权限！**
-> 
-> 调用此接口会返回 `403 FORBIDDEN` 错误：
-> ```json
-> {
->   "error": true,
->   "code": "FORBIDDEN",
->   "message": "User does not have the right permissions. Necessary permissions are pos.show"
-> }
-> ```
-> 
-> **解决方案：** 直接使用客户提供的 Pos ID，在 **「二、基础配置信息」** 中已配置：
-> - Pos ID: `92989df0-333d-11ed-ba8f-8ff40d49a83f`
 
 **请求参数：**
 
@@ -480,15 +629,15 @@ curl -X GET "https://nextapi.qweekle.at/api/access/logs" \
 |------|------|------|------|
 | `filter[venture_id]` | string | 否 | 按机构 ID 筛选 |
 | `filter[label]` | string | 否 | 按名称模糊筛选 |
-| `filter[type]` | string | 否 | 按类型筛选（如 `access_ctrl`） |
+| `filter[type]` | string | 否 | 按类型筛选（如 `access_ctrl`、`std`、`web`、`gestion`、`kiosk`） |
 | `include` | string | 否 | 包含子资源（如 `latestPosSession`） |
 
 **请求示例：**
 ```bash
-curl -X GET "https://nextapi.qweekle.at/api/pos?filter[venture_id]=<venture_id>" \
+curl -X GET "https://nextapi.qweekle.at/api/pos" \
   -H "Authorization: Bearer 888|aCs8qcl1fhyToJsBdsNwtcgeKwYi0Qc4FIhJnHLUf649579e" \
   -H "tenant: 019a248b-66e1-7214-875d-41e05984a099" \
-  -H "venture: <venture_id>" \
+  -H "venture: VXXX9ebc3ccae0234d01b1130cf58bea39dd" \
   -H "Content-Type: application/json"
 ```
 
@@ -674,7 +823,211 @@ curl -X POST "https://nextapi.qweekle.at/api/pos-sessions/PSXXa0a893f18a86483e83
 
 ---
 
-## 十二、完整验票流程图
+## 十二、票据详情接口
+
+### 12.1 获取 Ticket 详情
+
+| 项目 | 内容 |
+|------|------|
+| 接口 | `GET /tickets/{ticket_id}` |
+| 作用 | 获取票据详细信息（过期时间、使用次数、客户信息等） |
+| 使用场景 | 验票成功后，根据 `scanned_resource.id` 获取补充信息 |
+
+**请求参数：**
+
+| 参数 | 类型 | 位置 | 必填 | 说明 |
+|------|------|------|------|------|
+| `ticket_id` | string | 路径 | ✅ 是 | 票据 UUID（从验票响应的 `scanned_resource.id` 获取） |
+
+#### ⚠️ ticket_id 获取方法与空值说明
+
+**获取方法：**
+```
+POST /access/check-code 验票成功后
+        ↓
+响应中的 metadata.scanned_resource.id 即为 ticket_id
+        ↓
+使用该 id 调用 GET /tickets/{ticket_id}
+```
+
+**scanned_resource 为 null 的情况：**
+
+| 场景 | scanned_resource 值 | 说明 |
+|------|---------------------|------|
+| 验票成功 | `{ id: "xxx", ... }` | 正常返回票据信息 |
+| 票据无效/不存在 | `null` | 无法获取 ticket_id，不能调用详情接口 |
+| 票据已过期 | `null` 或有值 | 取决于后端实现 |
+
+**前端处理建议：**
+```typescript
+const response = await checkCode(code, posId);
+
+if (response.data.access_granted && response.metadata.scanned_resource) {
+  // 验票成功且有票据信息，可以获取详情
+  const ticketId = response.metadata.scanned_resource.id;
+  const ticketDetail = await getTicketDetail(ticketId);
+} else {
+  // 验票失败或无票据信息，跳过详情获取
+  // 直接使用验票响应中的 message 显示拒绝原因
+}
+```
+
+**请求示例：**
+```bash
+curl -X GET "https://nextapi.qweekle.at/api/tickets/a0a906e0e1a64a84b9ab2a7460ff0a28" \
+  -H "Authorization: Bearer 888|aCs8qcl1fhyToJsBdsNwtcgeKwYi0Qc4FIhJnHLUf649579e" \
+  -H "tenant: 019a248b-66e1-7214-875d-41e05984a099" \
+  -H "venture: VXXX9ebc3ccae0234d01b1130cf58bea39dd" \
+  -H "Content-Type: application/json"
+```
+
+**响应格式：**
+```json
+{
+  "data": {
+    "id": "a0a906e0e1a64a84b9ab2a7460ff0a28",
+    "number": "ADEE578B3F1C8",
+    "product_label": "Billet 1000 entrée",
+    "qty_total": 1000,
+    "qty_used": 24,
+    "qty_left": 976,
+    "expired_at": "2026-12-23T23:59:59+01:00",
+    "last_used_at": "2025-12-25T03:28:27+01:00",
+    "sale_number": "S-251223-000004",
+    "client": null,
+    "is_subscription": false,
+    "price": 0,
+    "sold_at": "2025-12-23T09:24:12+01:00"
+  }
+}
+```
+
+**关键字段说明：**
+
+| 字段 | 类型 | 说明 | UI 用途 |
+|------|------|------|---------|
+| `number` | string | 票据码 | 显示票号 |
+| `product_label` | string | 产品名称 | 显示票种（年卡/次卡/门票等） |
+| `qty_total` | integer | 总可用次数 | 显示"总次数" |
+| `qty_used` | integer | 已使用次数 | 显示"已用" |
+| `qty_left` | integer | 剩余次数 | 显示"剩余" |
+| `expired_at` | datetime | 过期时间 | 显示有效期 |
+| `last_used_at` | datetime | 上次使用时间 | 显示"上次通过时间" |
+| `is_subscription` | boolean | 是否为订阅/年卡 | 判断票据类型 |
+| `client` | object/null | 客户信息 | 显示客户头像/姓名 |
+
+---
+
+### 12.2 获取客户详情
+
+| 项目 | 内容 |
+|------|------|
+| 接口 | `GET /clients/{client_id}` |
+| 作用 | 获取客户详细信息（头像、姓名等） |
+| 使用场景 | 需要显示客户头像时，根据 `client_id` 查询 |
+
+#### ⚠️ client_id 获取方法与空值说明
+
+**获取方法：**
+```
+GET /tickets/{ticket_id} 获取票据详情
+        ↓
+响应中的 data.client.id 即为 client_id
+        ↓
+使用该 id 调用 GET /clients/{client_id}
+```
+
+**client 为 null 的情况：**
+
+| 场景 | client 值 | 说明 |
+|------|-----------|------|
+| 票据绑定了客户 | `{ id: "xxx", ... }` | 可以获取客户详情 |
+| 匿名购买的票据 | `null` | 票据未绑定任何客户 |
+| 批量生成的通用票 | `null` | 如团体票、促销票等 |
+| 赠送票/免费票 | `null` | 通常不绑定客户 |
+| POS 现场售票 | `null` | 现场购买通常不登记客户 |
+
+**前端处理建议：**
+```typescript
+const ticketDetail = await getTicketDetail(ticketId);
+
+if (ticketDetail.data.client) {
+  // 有客户信息，可以获取头像和姓名
+  const clientId = ticketDetail.data.client.id;
+  const clientDetail = await getClientDetail(clientId);
+  
+  // 显示客户头像（注意 profile_picture 也可能为 null）
+  const avatar = clientDetail.data.profile_picture || '默认头像URL';
+  const name = `${clientDetail.data.firstname} ${clientDetail.data.lastname}`;
+} else {
+  // 无客户信息的处理方式：
+  // 1. 显示默认占位头像
+  // 2. 隐藏客户信息区域
+  // 3. 显示"匿名票据"或"无绑定客户"
+}
+```
+
+**请求示例：**
+```bash
+curl -X GET "https://nextapi.qweekle.at/api/clients/045b1830-9936-11ee-8c4f-1d17ff407a76" \
+  -H "Authorization: Bearer 888|aCs8qcl1fhyToJsBdsNwtcgeKwYi0Qc4FIhJnHLUf649579e" \
+  -H "tenant: 019a248b-66e1-7214-875d-41e05984a099" \
+  -H "venture: VXXX9ebc3ccae0234d01b1130cf58bea39dd" \
+  -H "Content-Type: application/json"
+```
+
+**响应格式：**
+```json
+{
+  "data": {
+    "id": "0068f6a0-dec1-11ed-8dab-d7c16c3b229a",
+    "profile_picture": "https://minio-api.bohort.qweekle.run/.../profile_picture.png",
+    "firstname": "ERIC",
+    "lastname": "BAY",
+    "email": "eric@example.com",
+    "phone": "+33679849822"
+  }
+}
+```
+
+**关键字段说明：**
+
+| 字段 | 类型 | 说明 | UI 用途 |
+|------|------|------|---------|
+| `profile_picture` | string/null | 头像 URL | 显示客户头像 |
+| `firstname` | string | 名 | 显示客户姓名 |
+| `lastname` | string | 姓 | 显示客户姓名 |
+
+---
+
+### 12.3 验票后获取补充信息流程
+
+```
+验票成功 (access_granted = true)
+        ↓
+从 scanned_resource 获取基础信息
+（剩余次数、过期时间已包含）
+        ↓
+    需要更多详情？
+        ↓
+    GET /tickets/{scanned_resource.id}
+        ↓
+    获取：
+    - product_label（票种名称）
+    - last_used_at（上次通过时间）
+    - is_subscription（是否年卡）
+    - client（客户信息）
+        ↓
+    需要客户头像？
+        ↓
+    GET /clients/{client_id}
+        ↓
+    获取 profile_picture
+```
+
+---
+
+## 十三、完整验票流程图
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
